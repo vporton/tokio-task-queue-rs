@@ -3,7 +3,12 @@ name = "tokio-task-queue"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "mytest"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.16.1", features = ["rt", "sync"] }
+tokio = { version = "1.16.1", features = ["rt", "macros", "sync", "rt-multi-thread"] }
+log = "*"
+env_logger = "*"
