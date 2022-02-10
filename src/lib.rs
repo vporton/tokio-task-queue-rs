@@ -21,21 +21,24 @@ impl TaskQueue {
     }
     async fn _task(this: Arc<Mutex<Self>>) { // FIXME: Check everything
         let notify = this.lock().await.notify.clone();
-        let front = this.lock().await.queued_tasks.pop_front();
-        if let Some(front) = front {
-            // Not all `push_task` notifications handled, we will return on a subsequent loop iteration.
-            // So, no notification is lost.
-            let notify_guard = notify.lock().await;
-            select! {
-                _ = notify_guard.notified() => {
-                    // All notifications by `push_task` are already handled (otherwise, it wouldn't be empty),
-                    // so, it is a notification to interrupt.
-                    return;
+        loop {
+            let front = this.lock().await.queued_tasks.pop_front();
+            if let Some(front) = front {
+                // Not all notifications from `push_task` are already handled, we will return on a subsequent loop iteration.
+                // So, no notification is lost.
+                let notify_guard = notify.lock().await;
+                select! {
+                    _ = notify_guard.notified() => {
+                        // All notifications by `push_task` are already handled (otherwise, it wouldn't be empty),
+                        // so, it is a notification to interrupt.
+                        return;
+                    }
+                    _ = front => { }
                 }
-                _ = front => { }
-            };
-        } else {
-            notify.lock().await.notified().await
+                ;
+            } else {
+                notify.lock().await.notified().await
+            }
         }
     }
     pub async fn push_task(this: Arc<Mutex<Self>>, task: Pin<Box<dyn Future<Output=()> + Send>>) {
