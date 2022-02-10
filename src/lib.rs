@@ -51,7 +51,7 @@ impl TaskQueue {
     }
     /// If notified when task queue is empty, stops the scheduler.
     pub fn notify(&self) {
-        self.notify.notify_waiters();
+        self.notify.notify_one();
     }
     // pub fn notifier(&self) -> &Notify { // I don't expose it to public API because of mess in notify_waiters()
     //     &self.notify
