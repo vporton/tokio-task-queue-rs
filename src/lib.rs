@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use log::debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -8,14 +9,14 @@ use tokio::task::JoinHandle;
 
 pub struct TaskQueue {
     // join_handle: JoinHandle<()>,
-    queued_tasks: Vec<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    queued_tasks: VecDeque<Pin<Box<dyn Future<Output = ()> + Send>>>,
     notify: Notify, // Used for both notifications after a task queued and for closing the thread.
 }
 
 impl TaskQueue {
     pub fn new() -> Self {
         Self {
-            queued_tasks: Vec::new(),
+            queued_tasks: VecDeque::new(),
             notify: Notify::new(),
         }
     }
@@ -23,10 +24,9 @@ impl TaskQueue {
         debug!("TASK");
         let guard = this.lock().await;
         debug!("guard.queued_tasks.len() = {}", guard.queued_tasks.len());
-        if !this.lock().await.queued_tasks.is_empty() {
+        if let Some(front) = this.lock().await.queued_tasks.pop_front() {
             // Not all `push_task` notifications handled, we will return on a subsequent loop iteration.
             // So, no notification is lost.
-            let front = this.lock().await.queued_tasks.remove(0);
             select! {
                 _ = guard.notify.notified() => {
                     // All notifications by `push_task` are already handled (otherwise, it wouldn't be empty),
@@ -42,7 +42,7 @@ impl TaskQueue {
         debug!("UUU");
     }
     pub async fn push_task(this: Arc<Mutex<Self>>, task: Pin<Box<dyn Future<Output=()> + Send>>) {
-        this.lock().await.queued_tasks.push(task);
+        this.lock().await.queued_tasks.push_back(task);
         this.lock().await.notify.notify_one(); // notify_waiters() doesn't work here, because it would need already to wait.
     }
     pub fn spawn(this: Arc<Mutex<Self>>) -> JoinHandle<()> {
