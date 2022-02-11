@@ -22,9 +22,9 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
         }
     }
     async fn _task(this: Arc<Mutex<Self>>) { // FIXME: Check everything
-        let this2 = this.clone();
+        // let this2 = this.clone();
         loop {
-            let this2 = this2.clone();
+            let this2 = this.clone();
             let stream = &mut *this2.lock().await;
             if let Some(task) = stream.task_stream.next().await {
                 task.await;
