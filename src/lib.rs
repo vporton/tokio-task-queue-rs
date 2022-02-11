@@ -1,3 +1,5 @@
+mod tasks_with_regular_pauses;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,7 +10,7 @@ use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 use tokio_interruptible_future::{InterruptError, interruptible};
 
-type TaskItem = Box<dyn Future<Output = ()> + Send + Unpin>;
+pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send + Unpin>>;
 
 /// Execute futures from a stream of futures in order in a Tokio task. Not tested code.
 pub struct TaskQueue<TaskStream: Stream<Item = TaskItem> + Send + 'static>
