@@ -18,14 +18,14 @@ pub struct TaskQueue<TaskStream: Stream<Item = TaskItem> + Send + 'static>
 {
     // join_handle: JoinHandle<()>,
     task_stream: Pin<Box<TaskStream>>,
-    current_task: Arc<Mutex<Option<Pin<Box<dyn Future<Output = ()> + Send + Unpin>>>>>,
+    current_task: Option<Pin<Box<dyn Future<Output = ()> + Send + Unpin>>>,
 }
 
 impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
 {
     pub fn new(task_stream: TaskStream) -> Self {
         Self {
-            current_task: Arc::new(Mutex::new(None)),
+            current_task: None,
             task_stream: Box::pin(task_stream),
         }
     }
@@ -35,18 +35,18 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
             let this2 = this2.clone();
             let this3 = this2.clone();
             let finish_current = async move {
+                // FIXME: While I wait for `current_task` all `this` is blocked.
                 let current_task = { // block to limit guard
                     let guard = this2.lock().await;
-                    &*guard.current_task.lock().await
+                    guard.current_task
                 };
-                // FIXME: I use `current_task` for both `.await` and
-                if let Some(ref mut current) = current_task {
-                    current.await;
+                if let Some(current_task) = current_task {
+                    current_task.await;
                 }
             };
             let thisy = this3.lock().await; // to short lock lifetime
-            let current_task2 = thisy.current_task.lock().await;
-            if let Some(ref mut current_task) = *current_task2 { // FIXME: lock lifetime correct?
+            let current_task2 = thisy.current_task; // TODO
+            if let Some(ref mut current_task) = current_task2 { // FIXME: lock lifetime correct?
                 let mut thisx = this.lock().await; // to shorten lock lifetime
                 select! {
                     _ = current_task => { }
@@ -55,9 +55,9 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
                             if !front.interrupt_previous {
                                 finish_current.await;
                             }
-                            this.lock().await.current_task = Arc::new(Mutex::new(Some(front.task)));
+                            this.lock().await.current_task = Some(front.task);
                             let this1 = this.lock().await; // FIXME: Shorten the lifetime.
-                            let opt = &mut *this1.current_task.lock().await;
+                            let opt = &mut this1.current_task;
                             if let Some(ref mut task) = opt {
                                 task.await;
                             }
