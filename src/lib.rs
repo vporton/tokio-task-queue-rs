@@ -1,7 +1,7 @@
+use std::borrow::Borrow;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use futures::future::ready;
 use futures::stream::Stream;
 use futures::StreamExt;
 use tokio::{select, spawn};
@@ -18,14 +18,14 @@ pub struct TaskQueue<TaskStream: Stream<Item = TaskItem> + Send + 'static>
 {
     // join_handle: JoinHandle<()>,
     task_stream: Pin<Box<TaskStream>>,
-    current_task: Option<Pin<Box<dyn Future<Output = ()> + Send + Unpin>>>,
+    current_task: Arc<Mutex<Option<Pin<Box<dyn Future<Output = ()> + Send + Unpin>>>>>,
 }
 
 impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
 {
     pub fn new(task_stream: TaskStream) -> Self {
         Self {
-            current_task: None,
+            current_task: Arc::new(Mutex::new(None)),
             task_stream: Box::pin(task_stream),
         }
     }
@@ -33,25 +33,32 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
         let this2 = this.clone();
         loop {
             let this2 = this2.clone();
+            let this3 = this2.clone();
             let finish_current = async move {
                 let current_task = { // block to limit guard
-                    let mut guard = this2.lock().await;
-                    guard.current_task.take()
+                    let guard = this2.lock().await;
+                    guard.current_task.lock().await
                 };
                 if let Some(current) = current_task {
                     current.await;
                 }
             };
-            if let Some(current) = &this.lock().await.current_task {
+            let thisy = this3.lock().await; // to short lock lifetime
+            if let Some(ref mut current_task) = *thisy.current_task.lock().await { // FIXME: lock lifetime correct?
+                let mut thisx = this.lock().await; // to shorten lock lifetime
                 select! {
-                    _ = *current => { }
-                    front = this.lock().await.task_stream.next() => {
+                    _ = current_task => { }
+                    front = thisx.task_stream.next() => {
                         if let Some(front) = front {
                             if !front.interrupt_previous {
                                 finish_current.await;
                             }
-                            this.lock().await.current_task = Some(front.task);
-                            this.lock().await.current_task.unwrap().await;
+                            this.lock().await.current_task = Arc::new(Mutex::new(Some(front.task)));
+                            let this1 = this.lock().await; // FIXME: Shorten the lifetime.
+                            let opt = &mut *this1.current_task.lock().await;
+                            if let Some(ref mut task) = opt {
+                                task.await;
+                            }
                         } else {
                             finish_current.await;
                             return;
