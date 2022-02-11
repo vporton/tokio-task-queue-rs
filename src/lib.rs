@@ -7,7 +7,7 @@ use tokio::spawn;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-type TaskItem = Pin<Box<dyn Future<Output = ()> + Send + Unpin>>;
+type TaskItem = Box<dyn Future<Output = ()> + Send + Unpin>;
 
 pub struct TaskQueue<TaskStream: Stream<Item = TaskItem> + Send + 'static>
 {
