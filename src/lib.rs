@@ -4,8 +4,9 @@ use std::sync::Arc;
 use futures::stream::Stream;
 use futures::StreamExt;
 use tokio::spawn;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
+use tokio_interruptible_future::{InterruptError, interruptible};
 
 type TaskItem = Box<dyn Future<Output = ()> + Send + Unpin>;
 
@@ -32,12 +33,11 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
             }
         }
     }
-    // pub async fn push_task(this: Arc<Mutex<Self>>, task: Pin<Box<dyn Future<Output=()> + Send>>) {
-    //     this.lock().await.queued_tasks.push_back(task);
-    //     this.lock().await.notify_interrupt.lock().await.notify_one(); // notify_waiters() doesn't work here, because it would need already to wait.
-    // }
-    pub fn spawn(this: Arc<Mutex<Self>>) -> JoinHandle<()> {
-        spawn(Self::_task(this)) // TODO: Make it interruptible.
+    pub fn spawn(this: Arc<Mutex<Self>>, notify_interrupt: Arc<Notify>) -> JoinHandle<Result<(), InterruptError>> {
+        spawn( interruptible(notify_interrupt, async move {
+            Self::_task(this).await;
+            Ok(())
+        }))
     }
     // If notified when task queue is empty, stops the scheduler.
     // pub async fn notify(&self) {

@@ -13,3 +13,4 @@ tokio = { version = "1.16.1", features = ["rt", "macros", "sync", "rt-multi-thre
 futures = "0.3.21"
 log = "*"
 env_logger = "*"
+tokio-interruptible-future = "0.10.4"
