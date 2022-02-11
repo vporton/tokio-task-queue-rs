@@ -30,31 +30,38 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
         }
     }
     async fn _task(this: Arc<Mutex<Self>>) { // FIXME: Check everything
+        let this2 = this.clone();
         loop {
-            let front_future = this.lock().await.task_stream.next();
-            select! {
-                _ = if let Some(current) = this.lock().await.current_task {
-                    current as Pin<Box<dyn Future<Output = ()> + Send + Unpin>>
-                } else {
-                    Box::pin(ready(())) as Pin<Box<dyn Future<Output = ()> + Send + Unpin>>
-                } => { }
-                front = front_future => {
-                    if let Some(front) = front {
-                        if !front.interrupt_previous {
-                            if let Some(current) = this.lock().await.current_task {
-                                current.await;
-                            }
-                        }
-                        this.lock().await.current_task = Some(front.task);
-                        this.lock().await.current_task.unwrap().await;
-                    } else {
-                        if let Some(current) = this.lock().await.current_task {
-                            current.await;
-                        }
-                        return;
-                    }
+            let this2 = this2.clone();
+            let finish_current = async move {
+                let current_task = { // block to limit guard
+                    let mut guard = this2.lock().await;
+                    guard.current_task.take()
+                };
+                if let Some(current) = current_task {
+                    current.await;
                 }
             };
+            if let Some(current) = &this.lock().await.current_task {
+                select! {
+                    _ = *current => { }
+                    front = this.lock().await.task_stream.next() => {
+                        if let Some(front) = front {
+                            if !front.interrupt_previous {
+                                finish_current.await;
+                            }
+                            this.lock().await.current_task = Some(front.task);
+                            this.lock().await.current_task.unwrap().await;
+                        } else {
+                            finish_current.await;
+                            return;
+                        }
+                    }
+                };
+            } else {
+                this.lock().await.task_stream.next().await;
+                finish_current.await;
+            }
         }
     }
     // pub async fn push_task(this: Arc<Mutex<Self>>, task: Pin<Box<dyn Future<Output=()> + Send>>) {
