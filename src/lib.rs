@@ -10,6 +10,7 @@ use tokio_interruptible_future::{InterruptError, interruptible};
 
 type TaskItem = Box<dyn Future<Output = ()> + Send + Unpin>;
 
+/// Execute futures from a stream of futures in order in a Tokio task. Not tested code.
 pub struct TaskQueue<TaskStream: Stream<Item = TaskItem> + Send + 'static>
 {
     task_stream: Pin<Box<TaskStream>>,
@@ -22,7 +23,7 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
             task_stream: Box::pin(task_stream),
         }
     }
-    async fn _task(this: Arc<Mutex<Self>>) { // FIXME: Check everything
+    async fn _task(this: Arc<Mutex<Self>>) {
         loop {
             let this2 = this.clone();
             let stream = &mut *this2.lock().await;
@@ -38,33 +39,5 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
             Self::_task(this).await;
             Ok(())
         }))
-    }
-    // If notified when task queue is empty, stops the scheduler.
-    // pub async fn notify(&self) {
-    //     self.notify_interrupt_queue.lock().await.notify_one();
-    // }
-    // pub fn notifier(&self) -> &Notify { // I don't expose it to public API because of mess in notify_waiters()
-    //     &self.notify
-    // }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use tokio::runtime::Runtime;
-    use tokio::sync::Mutex;
-    use crate::TaskQueue;
-
-    #[test]
-    fn test() {
-        let rt  = Runtime::new().unwrap();
-        rt.block_on(async {
-            let queue = Arc::new(Mutex::new(TaskQueue::new()));
-            TaskQueue::push_task(queue.clone(), Box::pin(async { let _ = 1 + 1; })).await;
-            let join_handle = TaskQueue::spawn(queue.clone());
-            TaskQueue::push_task(queue.clone(), Box::pin(async { let _ = 2 + 2; })).await;
-            queue.lock().await.notify().await; // Stop the scheduler.
-            join_handle.await.unwrap();
-        });
     }
 }
