@@ -1,31 +1,23 @@
-use std::borrow::Borrow;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use futures::stream::Stream;
 use futures::StreamExt;
-use tokio::{select, spawn};
+use tokio::spawn;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-struct TaskItem {
-    task: Pin<Box<dyn Future<Output = ()> + Send + Unpin>>,
-    interrupt_previous: bool,
-}
+type TaskItem = Pin<Box<dyn Future<Output = ()> + Send + Unpin>>;
 
-// FIXME: To overcome the race condition, use a tx/rx pair instead of deque.
 pub struct TaskQueue<TaskStream: Stream<Item = TaskItem> + Send + 'static>
 {
-    // join_handle: JoinHandle<()>,
     task_stream: Pin<Box<TaskStream>>,
-    current_task: Option<Pin<Box<dyn Future<Output = ()> + Send + Unpin>>>,
 }
 
 impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
 {
     pub fn new(task_stream: TaskStream) -> Self {
         Self {
-            current_task: None,
             task_stream: Box::pin(task_stream),
         }
     }
@@ -33,43 +25,11 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
         let this2 = this.clone();
         loop {
             let this2 = this2.clone();
-            let this3 = this2.clone();
-            let finish_current = async move {
-                // FIXME: While I wait for `current_task` all `this` is blocked.
-                let current_task = { // block to limit guard
-                    let guard = this2.lock().await;
-                    guard.current_task
-                };
-                if let Some(current_task) = current_task {
-                    current_task.await;
-                }
-            };
-            let thisy = this3.lock().await; // to short lock lifetime
-            let current_task2 = thisy.current_task; // TODO
-            if let Some(ref mut current_task) = current_task2 { // FIXME: lock lifetime correct?
-                let mut thisx = this.lock().await; // to shorten lock lifetime
-                select! {
-                    _ = current_task => { }
-                    front = thisx.task_stream.next() => {
-                        if let Some(front) = front {
-                            if !front.interrupt_previous {
-                                finish_current.await;
-                            }
-                            this.lock().await.current_task = Some(front.task);
-                            let this1 = this.lock().await; // FIXME: Shorten the lifetime.
-                            let opt = &mut this1.current_task;
-                            if let Some(ref mut task) = opt {
-                                task.await;
-                            }
-                        } else {
-                            finish_current.await;
-                            return;
-                        }
-                    }
-                };
+            let stream = &mut *this2.lock().await;
+            if let Some(task) = stream.task_stream.next().await {
+                task.await;
             } else {
-                this.lock().await.task_stream.next().await;
-                finish_current.await;
+                break;
             }
         }
     }
