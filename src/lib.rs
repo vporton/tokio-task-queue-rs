@@ -37,14 +37,16 @@ impl<TaskStream: Stream<Item = TaskItem> + Send + 'static> TaskQueue<TaskStream>
             let finish_current = async move {
                 let current_task = { // block to limit guard
                     let guard = this2.lock().await;
-                    guard.current_task.lock().await
+                    &*guard.current_task.lock().await
                 };
-                if let Some(current) = current_task {
+                // FIXME: I use `current_task` for both `.await` and
+                if let Some(ref mut current) = current_task {
                     current.await;
                 }
             };
             let thisy = this3.lock().await; // to short lock lifetime
-            if let Some(ref mut current_task) = *thisy.current_task.lock().await { // FIXME: lock lifetime correct?
+            let current_task2 = thisy.current_task.lock().await;
+            if let Some(ref mut current_task) = *current_task2 { // FIXME: lock lifetime correct?
                 let mut thisx = this.lock().await; // to shorten lock lifetime
                 select! {
                     _ = current_task => { }
