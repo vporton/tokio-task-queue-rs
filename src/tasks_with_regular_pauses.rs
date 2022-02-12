@@ -4,6 +4,7 @@
 //!
 //! This code is more a demo of my `tokio-task-queue` than a serious module.
 
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -19,25 +20,21 @@ use tokio::time::{Sleep, sleep};
 use tokio_interruptible_future::{InterruptError, interruptible};
 use crate::{TaskItem, TaskQueue};
 
-// TODO: Eliminate `'static`.
-pub struct TasksWithRegularPauses<Tasks: 'static + Stream<Item = TaskItem> + Send + Unpin> {
-    tasks: Tasks,
-    // we_are_in_pause: bool,
+pub struct TasksWithRegularPauses<'a, Tasks: Stream<Item = TaskItem> + Send + Sync + Unpin> {
+    tasks: &'a Tasks,
     task_queue: Arc<Mutex<TaskQueue>>,
-    pause_interrupt_tx: Option<async_channel::Sender<()>>, // `None` when not in pause // TODO: `Notify` instead?
+    pause_interrupt_tx: Option<async_channel::Sender<()>>, // `None` when not in pause
     sleep_duration: Duration, // TODO: Should be a method.
 }
 
 // FIXME: Correct?
 // impl Unpin for TasksWithRegularPauses { }
 
-impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Unpin> TasksWithRegularPauses<Tasks> {
-    pub fn new(tasks: Tasks, sleep_duration: Duration) -> Self {
+impl<'a, Tasks: Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularPauses<'a, Tasks> {
+    pub fn new(tasks: &'a Tasks, sleep_duration: Duration) -> Self {
         Self {
-            tasks,
+            tasks: &tasks,
             task_queue: Arc::new(Mutex::new(TaskQueue::new())),
-            // we_are_in_pause: false,
-            // pause: None,
             pause_interrupt_tx: None,
             sleep_duration, // TODO: Should be a method.
         }
@@ -64,7 +61,10 @@ impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Unpin> TasksWithRegularPa
                 notify_end_sleep_tx.send(()).await.unwrap();
                 Ok::<_, InterruptError>(())
             }).then(|_| async { () });
-            // let sleep = sleep;
+            // let sleep = sleep(sleep_duration);
+            // let mut sleep = async { };
+            // let sleep: &mut (dyn Future<Output = ()> + Unpin) = &mut Box::pin(&mut sleep);
+            let mut sleep = unsafe { Pin::new_unchecked(&mut sleep) }; // FIXME: https://fasterthanli.me/articles/pin-and-suffering seems to say this works.
             this.lock().await.task_queue.lock().await.push_task(Box::pin(sleep)).await;
 
             let notify_end_sleep_rx = notify_end_sleep_rx.clone();
@@ -86,14 +86,32 @@ impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Unpin> TasksWithRegularPa
     ) {
         let task_queue= this.lock().await.task_queue.clone();
         TaskQueue::spawn(task_queue, notify_interrupt.clone()); // FIXME: locks too long?
-        spawn( interruptible(notify_interrupt, async move { // FIXME: locks too long?
+        let this = this;
+        let fut = async move { // FIXME: locks too long?
             Self::_task(this).await;
             Ok::<_, InterruptError>(())
-        }));
+        };
+        // let fut = Arc::new(Mutex::new(fut));
+        spawn( interruptible(notify_interrupt, &mut Box::pin(fut)));
     }
     pub async fn suddenly( this: Arc<Mutex<Self>>) {
         if let Some(ref pause_interrupt_tx) = this.lock().await.pause_interrupt_tx {
             pause_interrupt_tx.send(()).await.unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::iter::{repeat, repeat_with};
+    use std::time::Duration;
+    use futures::{Stream, stream};
+    use crate::tasks_with_regular_pauses::TasksWithRegularPauses;
+
+
+    #[test]
+    fn empty() {
+        let tasks = stream::iter(repeat_with(|| Box::pin(async { 1 })));
+        let tasks_with_pauses = TasksWithRegularPauses::new(&tasks, Duration::from_millis(1));
     }
 }
