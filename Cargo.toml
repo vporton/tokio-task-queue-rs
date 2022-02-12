@@ -10,6 +10,7 @@ authors = ["Victor Porton"]
 [dependencies]
 tokio = { version = "1.16.1", features = ["rt", "macros", "sync", "rt-multi-thread", "time"] } # TODO: Remove unneeeded.
 futures = "0.3.21"
-tokio-interruptible-future = "2.0.0"
+tokio-interruptible-future = "3.0.2"
 tokio-stream = "0.1.8"
 async-channel = "1.6.1"
+send-cell = "0.1.4"

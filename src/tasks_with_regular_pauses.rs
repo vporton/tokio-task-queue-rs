@@ -4,6 +4,7 @@
 //!
 //! This code is more a demo of my `tokio-task-queue` than a serious module.
 
+use std::borrow::Borrow;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -12,16 +13,17 @@ use std::time::Duration;
 use futures::future::{Fuse, FusedFuture, ready};
 use futures::{ready, SinkExt, Stream, StreamExt, TryFutureExt};
 use futures::FutureExt;
+// use send_cell::SendCell;
 use tokio::{select, spawn};
 use tokio::sync::{Mutex, Notify};
 use tokio::sync::mpsc::channel;
 use tokio::task::JoinHandle;
 use tokio::time::{Sleep, sleep};
-use tokio_interruptible_future::{InterruptError, interruptible};
+use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable};
 use crate::{TaskItem, TaskQueue};
 
-pub struct TasksWithRegularPauses<'a, Tasks: Stream<Item = TaskItem> + Send + Sync + Unpin> {
-    tasks: &'a Tasks,
+pub struct TasksWithRegularPauses<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> {
+    tasks: Tasks,
     task_queue: Arc<Mutex<TaskQueue>>,
     pause_interrupt_tx: Option<async_channel::Sender<()>>, // `None` when not in pause
     sleep_duration: Duration, // TODO: Should be a method.
@@ -30,10 +32,10 @@ pub struct TasksWithRegularPauses<'a, Tasks: Stream<Item = TaskItem> + Send + Sy
 // FIXME: Correct?
 // impl Unpin for TasksWithRegularPauses { }
 
-impl<'a, Tasks: Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularPauses<'a, Tasks> {
-    pub fn new(tasks: &'a Tasks, sleep_duration: Duration) -> Self {
+impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularPauses<Tasks> {
+    pub fn new(tasks: Tasks, sleep_duration: Duration) -> Self {
         Self {
-            tasks: &tasks,
+            tasks: tasks,
             task_queue: Arc::new(Mutex::new(TaskQueue::new())),
             pause_interrupt_tx: None,
             sleep_duration, // TODO: Should be a method.
@@ -53,21 +55,19 @@ impl<'a, Tasks: Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularP
 
             let sleep_duration = this.lock().await.sleep_duration;
             let (pause_interrupt_tx, pause_interrupt_rx) = async_channel::bounded(1);
-            let (notify_end_sleep_tx, notify_end_sleep_rx) = async_channel::bounded(1);
+            let notify_end_sleep_pair = Arc::new(Mutex::new(async_channel::bounded(1)));
             let this2 = this2.clone();
-            let sleep = interruptible(pause_interrupt_rx.clone(), async move { // FIXME: locks for too long?
+            let mut notify_end_sleep_pair2 = notify_end_sleep_pair.clone();
+            // let notify_end_sleep_pair2 = &notify_end_sleep_pair2; // TODO
+            let mut sleep = interruptible_sendable(pause_interrupt_rx.clone(), Arc::new(Mutex::new(Box::pin(async move { // FIXME: locks for too long?
                 this2.lock().await.pause_interrupt_tx = Some(pause_interrupt_tx);
                 sleep(sleep_duration).await;
-                notify_end_sleep_tx.send(()).await.unwrap();
+                notify_end_sleep_pair2.clone().lock().await.0.send(()).await.unwrap();
                 Ok::<_, InterruptError>(())
-            }).then(|_| async { () });
-            // let sleep = sleep(sleep_duration);
-            // let mut sleep = async { };
-            // let sleep: &mut (dyn Future<Output = ()> + Unpin) = &mut Box::pin(&mut sleep);
-            let mut sleep = unsafe { Pin::new_unchecked(&mut sleep) }; // FIXME: https://fasterthanli.me/articles/pin-and-suffering seems to say this works.
+            })))).then(|_| async { () });
             this.lock().await.task_queue.lock().await.push_task(Box::pin(sleep)).await;
 
-            let notify_end_sleep_rx = notify_end_sleep_rx.clone();
+            let notify_end_sleep_rx = notify_end_sleep_pair.lock().await.1.clone();
             let pause_interrupt_rx = pause_interrupt_rx.clone();
             while this.lock().await.pause_interrupt_tx.is_some() {
                 select! {
@@ -87,12 +87,12 @@ impl<'a, Tasks: Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularP
         let task_queue= this.lock().await.task_queue.clone();
         TaskQueue::spawn(task_queue, notify_interrupt.clone()); // FIXME: locks too long?
         let this = this;
-        let fut = async move { // FIXME: locks too long?
+        let fut = Arc::new(Mutex::new(Box::pin(async move { // FIXME: locks too long?
             Self::_task(this).await;
             Ok::<_, InterruptError>(())
-        };
+        })));
         // let fut = Arc::new(Mutex::new(fut));
-        spawn( interruptible(notify_interrupt, &mut Box::pin(fut)));
+        spawn( interruptible_sendable(notify_interrupt, fut));
     }
     pub async fn suddenly( this: Arc<Mutex<Self>>) {
         if let Some(ref pause_interrupt_tx) = this.lock().await.pause_interrupt_tx {
@@ -112,6 +112,6 @@ mod tests {
     #[test]
     fn empty() {
         let tasks = stream::iter(repeat_with(|| Box::pin(async { 1 })));
-        let tasks_with_pauses = TasksWithRegularPauses::new(&tasks, Duration::from_millis(1));
+        let tasks_with_pauses = TasksWithRegularPauses::new(tasks, Duration::from_millis(1));
     }
 }

@@ -7,7 +7,7 @@ use tokio::spawn;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio_interruptible_future::{InterruptError, interruptible};
+use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable, interruptible_straight};
 
 pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -47,7 +47,7 @@ impl TaskQueue {
         this: Arc<Mutex<Self>>,
         notify_interrupt: async_channel::Receiver<()>,
     ) -> JoinHandle<Result<(), InterruptError>> {
-        spawn( interruptible(notify_interrupt, async move {
+        spawn( interruptible_straight(notify_interrupt, async move {
             Self::_task(this).await;
             Ok(())
         }))
