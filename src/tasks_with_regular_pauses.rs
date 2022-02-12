@@ -4,6 +4,7 @@
 //!
 //! This code is more a demo of my `tokio-task-queue` than a serious module.
 
+use std::borrow::Borrow;
 use std::future::Future;
 use std::ops::Not;
 use std::pin::Pin;
@@ -25,6 +26,9 @@ struct TasksWithRegularPausesStream<TaskCreator: Stream<Item = TaskItem> + Sync 
     forced: bool,
     sleep_duration: Duration, // TODO: Should be a method.
 }
+
+// FIXME: Correct?
+impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Unpin for TasksWithRegularPausesStream<TaskCreator> { }
 
 impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> TasksWithRegularPausesStream<TaskCreator> {
     pub fn new(task_creator: TaskCreator, sleep_duration: Duration) -> Self {
@@ -56,7 +60,7 @@ impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Stream for TasksWithRe
             //
             // }
         } else {
-            self.pause_interrupt = Arc::new(Notify::new());
+            self.get_mut().pause_interrupt = Arc::new(Notify::new());
             use futures::future::FutureExt;
             let sleep_duration = self.sleep_duration;
             Poll::Ready(
