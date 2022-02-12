@@ -9,75 +9,91 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use futures::future::{Fuse, FusedFuture, ready};
-use futures::{ready, Stream, StreamExt, TryFutureExt};
-use tokio::sync::Notify;
+use futures::{ready, SinkExt, Stream, StreamExt, TryFutureExt};
+use futures::FutureExt;
+use tokio::{select, spawn};
+use tokio::sync::{Mutex, Notify};
+use tokio::sync::mpsc::channel;
+use tokio::task::JoinHandle;
 use tokio::time::{Sleep, sleep};
 use tokio_interruptible_future::{InterruptError, interruptible};
 use crate::{TaskItem, TaskQueue};
 
-struct TasksWithRegularPauses {
+// TODO: Eliminate `'static`.
+pub struct TasksWithRegularPauses<Tasks: 'static + Stream<Item = TaskItem> + Send + Unpin> {
+    tasks: Tasks,
     // we_are_in_pause: bool,
-    task_queue: TaskQueue,
-    pause: Option<Fuse<Sleep>>,
-    pause_interrupt: Arc<Notify>,
-    forced: bool,
+    task_queue: Arc<Mutex<TaskQueue>>,
+    pause_interrupt_tx: Option<async_channel::Sender<()>>, // `None` when not in pause // TODO: `Notify` instead?
     sleep_duration: Duration, // TODO: Should be a method.
 }
 
 // FIXME: Correct?
-impl Unpin for TasksWithRegularPauses { }
+// impl Unpin for TasksWithRegularPauses { }
 
-impl TasksWithRegularPauses {
-    pub fn new(sleep_duration: Duration) -> Self {
+impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Unpin> TasksWithRegularPauses<Tasks> {
+    pub fn new(tasks: Tasks, sleep_duration: Duration) -> Self {
         Self {
-            task_queue: TaskQueue::new(),
+            tasks,
+            task_queue: Arc::new(Mutex::new(TaskQueue::new())),
             // we_are_in_pause: false,
-            pause: None,
-            pause_interrupt: Arc::new(Notify::new()),
-            forced: false,
+            // pause: None,
+            pause_interrupt_tx: None,
             sleep_duration, // TODO: Should be a method.
         }
     }
-    pub fn spawn() {
-
-    }
-}
-
-impl for TasksWithRegularPauses<TaskCreator> {
-    type Item = TaskItem;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>
-    ) -> Poll<Option<Self::Item>> {
-        if let Some(pause) = &self.pause {
-            if self.forced {
-                self.pause_interrupt.notify_one();
-                self.forced = false;
+    async fn _task(this: Arc<Mutex<Self>>) {
+        let this2 = this.clone();
+        loop {
+            { // block
+                let mut this1 = this.lock().await;
+                if let Some(task) = this1.tasks.next().await {
+                    this1.task_queue.lock().await.push_task(Box::pin(task)).await;
+                } else {
+                    break;
+                }
             }
-            Pin::new(&mut self.task_creator).poll_next(cx)
-            // if let Poll::Ready(task) = self.task_creator.poll_next(cx) {
-            //
-            // }
-        } else {
-            self.get_mut().pause_interrupt = Arc::new(Notify::new());
-            use futures::future::FutureExt;
-            let sleep_duration = self.sleep_duration;
-            Poll::Ready(
-                Some(
-                    Box::pin(
-                    Box::pin(
-                        interruptible(
-                            self.pause_interrupt.clone(),
-                            async move {
-                                sleep(sleep_duration).await;
-                                Ok(())
-                            }
-                        ).then(|_: Result<_, InterruptError>| ready(()))
-                    )
-                )
-                )
-            )
+
+            let sleep_duration = this.lock().await.sleep_duration;
+            let (pause_interrupt_tx, pause_interrupt_rx) = async_channel::bounded(1);
+            let (notify_end_sleep_tx, notify_end_sleep_rx) = async_channel::bounded(1);
+            let this2 = this2.clone();
+            let sleep = interruptible(pause_interrupt_rx.clone(), async move { // FIXME: locks for too long?
+                this2.lock().await.pause_interrupt_tx = Some(pause_interrupt_tx);
+                sleep(sleep_duration).await;
+                notify_end_sleep_tx.send(()).await.unwrap();
+                Ok::<_, InterruptError>(())
+            }).then(|_| async { () });
+            // let sleep = sleep;
+            this.lock().await.task_queue.lock().await.push_task(Box::pin(sleep)).await;
+
+            let notify_end_sleep_rx = notify_end_sleep_rx.clone();
+            let pause_interrupt_rx = pause_interrupt_rx.clone();
+            while this.lock().await.pause_interrupt_tx.is_some() {
+                select! {
+                    _ = async {
+                        notify_end_sleep_rx.recv().await.unwrap();
+                        this.lock().await.pause_interrupt_tx = None;
+                    } => { }
+                    _ = pause_interrupt_rx.recv() => { } // FIXME: Locks for too long?
+                }
+            }
+        }
+    }
+    pub async fn spawn(
+        this: Arc<Mutex<Self>>,
+        notify_interrupt: async_channel::Receiver<()>,
+    ) {
+        let task_queue= this.lock().await.task_queue.clone();
+        TaskQueue::spawn(task_queue, notify_interrupt.clone()); // FIXME: locks too long?
+        spawn( interruptible(notify_interrupt, async move { // FIXME: locks too long?
+            Self::_task(this).await;
+            Ok::<_, InterruptError>(())
+        }));
+    }
+    pub async fn suddenly( this: Arc<Mutex<Self>>) {
+        if let Some(ref pause_interrupt_tx) = this.lock().await.pause_interrupt_tx {
+            pause_interrupt_tx.send(()).await.unwrap();
         }
     }
 }

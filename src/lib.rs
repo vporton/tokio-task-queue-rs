@@ -1,4 +1,4 @@
-// mod tasks_with_regular_pauses;
+mod tasks_with_regular_pauses;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio_interruptible_future::{InterruptError, interruptible};
 
-pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send + Unpin>>;
+pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// Execute futures from a stream of futures in order in a Tokio task. Not tested code.
 pub struct TaskQueue
@@ -45,7 +45,7 @@ impl TaskQueue {
     }
     pub fn spawn(
         this: Arc<Mutex<Self>>,
-        notify_interrupt: &'static mut tokio::sync::broadcast::Receiver<()>
+        notify_interrupt: async_channel::Receiver<()>,
     ) -> JoinHandle<Result<(), InterruptError>> {
         spawn( interruptible(notify_interrupt, async move {
             Self::_task(this).await;
