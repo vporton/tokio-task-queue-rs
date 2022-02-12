@@ -4,9 +4,6 @@
 //!
 //! This code is more a demo of my `tokio-task-queue` than a serious module.
 
-use std::borrow::Borrow;
-use std::future::Future;
-use std::ops::Not;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -50,7 +47,7 @@ impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Stream for TasksWithRe
         self: Pin<&mut Self>,
         cx: &mut Context<'_>
     ) -> Poll<Option<Self::Item>> {
-        if let Some(pause) = self.pause {
+        if let Some(pause) = &self.pause {
             if self.forced {
                 self.pause_interrupt.notify_one();
                 self.forced = false;
