@@ -13,11 +13,11 @@ use futures::{ready, Stream, StreamExt, TryFutureExt};
 use tokio::sync::Notify;
 use tokio::time::{Sleep, sleep};
 use tokio_interruptible_future::{InterruptError, interruptible};
-use crate::TaskItem;
+use crate::{TaskItem, TaskQueue};
 
-struct TasksWithRegularPausesStream<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> {
+struct TasksWithRegularPauses {
     // we_are_in_pause: bool,
-    task_creator: TaskCreator,
+    task_queue: TaskQueue,
     pause: Option<Fuse<Sleep>>,
     pause_interrupt: Arc<Notify>,
     forced: bool,
@@ -25,12 +25,12 @@ struct TasksWithRegularPausesStream<TaskCreator: Stream<Item = TaskItem> + Sync 
 }
 
 // FIXME: Correct?
-impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Unpin for TasksWithRegularPausesStream<TaskCreator> { }
+impl Unpin for TasksWithRegularPauses { }
 
-impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> TasksWithRegularPausesStream<TaskCreator> {
-    pub fn new(task_creator: TaskCreator, sleep_duration: Duration) -> Self {
+impl TasksWithRegularPauses {
+    pub fn new(sleep_duration: Duration) -> Self {
         Self {
-            task_creator,
+            task_queue: TaskQueue::new(),
             // we_are_in_pause: false,
             pause: None,
             pause_interrupt: Arc::new(Notify::new()),
@@ -38,9 +38,12 @@ impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> TasksWithRegularPauses
             sleep_duration, // TODO: Should be a method.
         }
     }
+    pub fn spawn() {
+
+    }
 }
 
-impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Stream for TasksWithRegularPausesStream<TaskCreator> {
+impl for TasksWithRegularPauses<TaskCreator> {
     type Item = TaskItem;
 
     fn poll_next(
@@ -77,8 +80,4 @@ impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Stream for TasksWithRe
             )
         }
     }
-}
-
-pub struct TasksWithRegularPauses {
-
 }

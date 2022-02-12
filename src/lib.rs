@@ -1,17 +1,13 @@
-mod tasks_with_regular_pauses;
+// mod tasks_with_regular_pauses;
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use futures::stream::Stream;
-use futures::StreamExt;
 use tokio::spawn;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_interruptible_future::{InterruptError, interruptible};
-
 
 pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send + Unpin>>;
 
@@ -47,13 +43,16 @@ impl TaskQueue {
             }
         }
     }
-    pub fn spawn(this: Arc<Mutex<Self>>, notify_interrupt: Arc<Notify>) -> JoinHandle<Result<(), InterruptError>> {
+    pub fn spawn(
+        this: Arc<Mutex<Self>>,
+        notify_interrupt: &'static mut tokio::sync::broadcast::Receiver<()>
+    ) -> JoinHandle<Result<(), InterruptError>> {
         spawn( interruptible(notify_interrupt, async move {
             Self::_task(this).await;
             Ok(())
         }))
     }
-    pub fn push_task(&self, fut: TaskItem) {
-        self.tx.send(fut);
+    pub async fn push_task(&self, fut: TaskItem) {
+        let _ = self.tx.send(fut).await;
     }
 }
