@@ -58,20 +58,17 @@ impl<TaskCreator: Stream<Item = TaskItem> + Sync + Unpin> Stream for TasksWithRe
         } else {
             self.pause_interrupt = Arc::new(Notify::new());
             use futures::future::FutureExt;
+            let sleep_duration = self.sleep_duration;
             Poll::Ready(
                 Some(
                     Box::pin(
                     Box::pin(
                         interruptible(
                             self.pause_interrupt.clone(),
-                            async { cx.waker().wake() }
-                                .then(|_| sleep(self.sleep_duration))
-                                .then(|_| ready(Ok(())))
-                            // async move {
-                            //     sleep(self.sleep_duration).await;
-                            //     cx.waker().wake();
-                            //     Ok(())
-                            // }
+                            async move {
+                                sleep(sleep_duration).await;
+                                Ok(())
+                            }
                         ).then(|_: Result<_, InterruptError>| ready(()))
                     )
                 )
