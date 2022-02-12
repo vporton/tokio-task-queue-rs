@@ -20,72 +20,68 @@ use tokio::sync::mpsc::channel;
 use tokio::task::JoinHandle;
 use tokio::time::{Sleep, sleep};
 use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable};
+use async_trait::async_trait;
 use crate::{TaskItem, TaskQueue};
 
-pub struct TasksWithRegularPauses<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> {
-    tasks: Arc<Mutex<Tasks>>,
+pub struct TasksWithRegularPausesData {
     task_queue: Arc<Mutex<TaskQueue>>,
     pause_interrupt_tx: Option<async_channel::Sender<()>>, // `None` when not in pause
-    sleep_duration: Duration, // TODO: Should be a method.
 }
 
-// FIXME: Correct?
-// impl Unpin for TasksWithRegularPauses { }
-
-impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularPauses<Tasks> {
-    pub fn new(tasks: Arc<Mutex<Tasks>>, sleep_duration: Duration) -> Self {
-        Self {
-            tasks: tasks,
-            task_queue: Arc::new(Mutex::new(TaskQueue::new())),
-            pause_interrupt_tx: None,
-            sleep_duration, // TODO: Should be a method.
-        }
-    }
+#[async_trait]
+trait TasksWithRegularPauses<'a> where Self: 'static {
+    fn data(&self) -> &'a TasksWithRegularPausesData;
+    fn data_mut(&mut self) -> &'a mut TasksWithRegularPausesData;
+    async fn next_task(&self) -> Option<TaskItem>;
+    fn sleep_duration(&self) -> Duration;
     async fn _task(this: Arc<Mutex<Self>>) {
         let this2 = this.clone();
         loop {
             { // block
-                let mut this1 = this.lock().await;
-                let mut tasks = this1.tasks.lock().await;
-                if let Some(task) = tasks.next().await { // FIXME: lock duration?
-                    this1.task_queue.lock().await.push_task(Box::pin(task)).await;
+                let task = { // block to shorten lifetimes
+                    let this1 = this.lock().await; // FIXME: lock for too long?
+                    let task_fut = this1.next_task();
+                    task_fut.await
+                };
+                if let Some(task) = task { // FIXME: lock duration?
+                    this.lock().await.data_mut().task_queue.lock().await.push_task(Box::pin(task)).await;
                 } else {
                     break;
                 }
             }
 
-            let sleep_duration = this.lock().await.sleep_duration;
+            let sleep_duration = this.lock().await.sleep_duration();
             let (pause_interrupt_tx, pause_interrupt_rx) = async_channel::bounded(1);
             let notify_end_sleep_pair = Arc::new(Mutex::new(async_channel::bounded(1)));
             let this2 = this2.clone();
-            let mut notify_end_sleep_pair2 = notify_end_sleep_pair.clone();
+            let notify_end_sleep_pair2 = notify_end_sleep_pair.clone();
             // let notify_end_sleep_pair2 = &notify_end_sleep_pair2; // TODO
-            let mut sleep = interruptible_sendable(pause_interrupt_rx.clone(), Arc::new(Mutex::new(Box::pin(async move { // FIXME: locks for too long?
-                this2.lock().await.pause_interrupt_tx = Some(pause_interrupt_tx);
+            let sleep = interruptible_sendable(pause_interrupt_rx.clone(), Arc::new(Mutex::new(Box::pin(async move { // FIXME: locks for too long?
+                this2.lock().await.data_mut().pause_interrupt_tx = Some(pause_interrupt_tx);
                 sleep(sleep_duration).await;
                 notify_end_sleep_pair2.clone().lock().await.0.send(()).await.unwrap();
                 Ok::<_, InterruptError>(())
             })))).then(|_| async { () });
-            this.lock().await.task_queue.lock().await.push_task(Box::pin(sleep)).await;
+            this.lock().await.data_mut().task_queue.lock().await.push_task(Box::pin(sleep)).await;
 
             let notify_end_sleep_rx = notify_end_sleep_pair.lock().await.1.clone();
             let pause_interrupt_rx = pause_interrupt_rx.clone();
-            while this.lock().await.pause_interrupt_tx.is_some() {
+            while this.lock().await.data().pause_interrupt_tx.is_some() {
                 select! {
                     _ = async {
                         notify_end_sleep_rx.recv().await.unwrap();
-                        this.lock().await.pause_interrupt_tx = None;
+                        this.lock().await.data_mut().pause_interrupt_tx = None;
                     } => { }
                     _ = pause_interrupt_rx.recv() => { } // FIXME: Locks for too long?
                 }
             }
         }
     }
-    pub async fn spawn(
+    async fn spawn(
         this: Arc<Mutex<Self>>,
         notify_interrupt: async_channel::Receiver<()>,
     ) {
-        let task_queue= this.lock().await.task_queue.clone();
+        let task_queue = this.lock().await.data().task_queue.clone();
         TaskQueue::spawn(task_queue, notify_interrupt.clone()); // FIXME: locks too long?
         let this = this;
         let fut = Arc::new(Mutex::new(Box::pin(async move { // FIXME: locks too long?
@@ -95,9 +91,11 @@ impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRe
         // let fut = Arc::new(Mutex::new(fut));
         spawn( interruptible_sendable(notify_interrupt, fut));
     }
-    pub async fn suddenly( this: Arc<Mutex<Self>>) {
-        if let Some(ref pause_interrupt_tx) = this.lock().await.pause_interrupt_tx {
-            pause_interrupt_tx.send(()).await.unwrap();
+    async fn suddenly( this: Arc<Mutex<Self>>) {
+        let data = this.lock().await.data(); // FIXME: locks for too long?
+        if let Some(ref pause_interrupt_tx) = data.pause_interrupt_tx {
+            let fut = pause_interrupt_tx.send(()).await;
+            fut.unwrap();
         }
     }
 }
