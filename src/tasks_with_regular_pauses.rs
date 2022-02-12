@@ -23,7 +23,7 @@ use tokio_interruptible_future::{InterruptError, interruptible, interruptible_se
 use crate::{TaskItem, TaskQueue};
 
 pub struct TasksWithRegularPauses<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> {
-    tasks: Tasks,
+    tasks: Arc<Mutex<Tasks>>,
     task_queue: Arc<Mutex<TaskQueue>>,
     pause_interrupt_tx: Option<async_channel::Sender<()>>, // `None` when not in pause
     sleep_duration: Duration, // TODO: Should be a method.
@@ -33,7 +33,7 @@ pub struct TasksWithRegularPauses<Tasks: 'static + Stream<Item = TaskItem> + Sen
 // impl Unpin for TasksWithRegularPauses { }
 
 impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRegularPauses<Tasks> {
-    pub fn new(tasks: Tasks, sleep_duration: Duration) -> Self {
+    pub fn new(tasks: Arc<Mutex<Tasks>>, sleep_duration: Duration) -> Self {
         Self {
             tasks: tasks,
             task_queue: Arc::new(Mutex::new(TaskQueue::new())),
@@ -46,7 +46,8 @@ impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRe
         loop {
             { // block
                 let mut this1 = this.lock().await;
-                if let Some(task) = this1.tasks.next().await {
+                let mut tasks = this1.tasks.lock().await;
+                if let Some(task) = tasks.next().await { // FIXME: lock duration?
                     this1.task_queue.lock().await.push_task(Box::pin(task)).await;
                 } else {
                     break;
@@ -104,14 +105,17 @@ impl<Tasks: 'static + Stream<Item = TaskItem> + Send + Sync + Unpin> TasksWithRe
 #[cfg(test)]
 mod tests {
     use std::iter::{repeat, repeat_with};
+    use std::sync::Arc;
     use std::time::Duration;
     use futures::{Stream, stream};
+    use tokio::sync::Mutex;
     use crate::tasks_with_regular_pauses::TasksWithRegularPauses;
 
 
     #[test]
     fn empty() {
-        let tasks = stream::iter(repeat_with(|| Box::pin(async { 1 })));
+        let tasks = stream::iter(repeat_with(|| Box::pin(async { () })));
+        let tasks = Arc::new(Mutex::new(Box::pin(tasks)));
         let tasks_with_pauses = TasksWithRegularPauses::new(tasks, Duration::from_millis(1));
     }
 }
