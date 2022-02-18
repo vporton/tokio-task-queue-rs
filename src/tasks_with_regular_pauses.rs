@@ -21,21 +21,17 @@ use tokio::task::JoinHandle;
 use tokio::time::{Sleep, sleep, timeout};
 use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable};
 use async_trait::async_trait;
-use crate::{TaskQueue};
+use crate::{TaskItem, TaskQueue};
 
 pub struct TasksWithRegularPausesData {
-    sudden_tx: Sender<()>,
-    sudden_rx: Receiver<()>,
+    sudden_tx: Arc<Mutex<Sender<()>>>,
+    sudden_rx: Arc<Mutex<Receiver<()>>>,
 }
 
-// FIXME: Should instead use from `lib.rs`.
-pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send + Sync>>;
-
-
 #[async_trait]
-trait TasksWithRegularPauses<'a> where Self: Sync + 'static{
-    fn data(&'a self) -> &'a TasksWithRegularPausesData;
-    fn data_mut(&'a mut self) -> &'a mut TasksWithRegularPausesData;
+pub trait TasksWithRegularPauses: Sync {
+    fn data(&self) -> &TasksWithRegularPausesData;
+    fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
     async fn next_task(&self) -> Option<TaskItem>;
     fn sleep_duration(&self) -> Duration;
     async fn _task(this: Arc<Mutex<Self>>) {
@@ -53,23 +49,26 @@ trait TasksWithRegularPauses<'a> where Self: Sync + 'static{
             // if the outdated signal is generated while download
             // was in progress, ignore the signal by draining the receiver
             loop {
-                let mut this1 = this2.lock().await;
-                if this1.data_mut().sudden_rx.try_recv().is_err() {
+                let this2 = this2.clone();
+                let mut this1 = this.lock().await;
+                let data = this1.data_mut();
+                if data.sudden_rx.lock().await.try_recv().is_err() {
                     break;
                 }
             }
-            // while {
-            //     let mut this1 = this2.lock().await;
-            //     this1.data_mut().sudden_rx.try_recv().is_ok()
-            // } { }
 
             // re-download by a signal, or timeout (whichever comes first)
-            timeout(Duration::from_secs(3600), this.lock().await.data_mut().sudden_rx.recv()).await;
+            let mut sudden_fut = { // block to shorten locks
+                let this1 = this.lock().await;
+                this1.data().sudden_rx.clone()
+            };
+            let _ = timeout(Duration::from_secs(3600), sudden_fut.lock().await.recv()).await;
         }
     }
-    async fn suddenly(this: Arc<Mutex<Self>>) {
+    async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::SendError<()>>{
         let this1 = this.lock().await;
-        this1.data().sudden_tx.send(());
+        this1.data().sudden_tx.lock().await.send(()).await?;
+        Ok(())
     }
 }
 
