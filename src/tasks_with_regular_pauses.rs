@@ -75,10 +75,11 @@ pub trait TasksWithRegularPauses: Sync {
 mod tests {
     use std::iter::{repeat, repeat_with};
     use std::sync::Arc;
-    use std::sync::mpsc::channel;
     use std::time::Duration;
     use futures::{Stream, stream};
     use tokio::sync::Mutex;
+    use async_trait::async_trait;
+    use tokio::sync::mpsc::channel;
     use crate::TaskItem;
     use crate::tasks_with_regular_pauses::{TasksWithRegularPauses, TasksWithRegularPausesData};
 
@@ -88,22 +89,26 @@ mod tests {
 
     impl OurTaskQueue {
         pub fn new() -> Self {
-            let (sudden_tx, sudden_rx) = channel::<()>();
+            let (sudden_tx, sudden_rx) = channel::<()>(1);
             Self {
-                data: TasksWithRegularPausesData { sudden_tx, sudden_rx },
+                data: TasksWithRegularPausesData {
+                    sudden_tx: Arc::new(Mutex::new(sudden_tx)),
+                    sudden_rx: Arc::new(Mutex::new(sudden_rx)),
+                },
             }
         }
     }
 
-    impl<'a> TasksWithRegularPauses for OurTaskQueue<'a> where Self: 'static {
-        fn data(&'a self) -> &'a TasksWithRegularPausesData {
+    #[async_trait]
+    impl<'a> TasksWithRegularPauses for OurTaskQueue where Self: 'static {
+        fn data(&self) -> &TasksWithRegularPausesData {
             &self.data
         }
-        fn data_mut(&'a mut self) -> &'a mut TasksWithRegularPausesData {
+        fn data_mut(&mut self) -> &mut TasksWithRegularPausesData {
             &mut self.data
         }
         async fn next_task(&self) -> Option<TaskItem> {
-            Some(async { () })
+            Some(Box::pin(async { () }))
         }
         fn sleep_duration(&self) -> Duration {
             Duration::from_millis(1)
@@ -114,6 +119,6 @@ mod tests {
     fn empty() {
         let tasks = stream::iter(repeat_with(|| Box::pin(async { () })));
         let tasks = Arc::new(Mutex::new(Box::pin(tasks)));
-        let tasks_with_pauses = TasksWithRegularPauses::new(tasks, Duration::from_millis(1));
+        let tasks_with_pauses = OurTaskQueue::new(tasks, Duration::from_millis(1));
     }
 }
