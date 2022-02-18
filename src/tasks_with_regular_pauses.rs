@@ -15,8 +15,8 @@ use futures::{ready, SinkExt, Stream, StreamExt, TryFutureExt};
 use futures::FutureExt;
 // use send_cell::SendCell;
 use tokio::{select, spawn};
-use tokio::sync::{Mutex, Notify};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time::{Sleep, sleep, timeout};
 use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable};
@@ -24,8 +24,8 @@ use async_trait::async_trait;
 use crate::{TaskItem, TaskQueue};
 
 pub struct TasksWithRegularPausesData {
-    sudden_tx: Arc<Mutex<Sender<()>>>,
-    sudden_rx: Arc<Mutex<Receiver<()>>>,
+    sudden_tx: Option<Arc<Mutex<Sender<()>>>>,
+    // sudden_rx: Option<Arc<Mutex<Receiver<()>>>>,
 }
 
 #[async_trait]
@@ -35,8 +35,9 @@ pub trait TasksWithRegularPauses: Sync {
     async fn next_task(&self) -> Option<TaskItem>;
     fn sleep_duration(&self) -> Duration;
     async fn _task(this: Arc<Mutex<Self>>) {
-        let this2 = this.clone();
         loop {
+            use tokio::sync::oneshot;
+
             // It is time to run a task.
             let this1 = this.lock().await;
             let fut = this1.next_task().await;
@@ -46,27 +47,20 @@ pub trait TasksWithRegularPauses: Sync {
                 break;
             }
 
-            // If the "sudden" signal is generated while task was in progress, ignore the signal by draining the receiver.
-            loop {
-                let this2 = this2.clone();
-                let mut this1 = this.lock().await;
-                let data = this1.data_mut();
-                if data.sudden_rx.lock().await.try_recv().is_err() {
-                    break;
-                }
-            }
+            // Signal that may interrupt the task.
+            let (sudden_tx, mut sudden_rx) = mpsc::channel(1);
+            this.lock().await.data_mut().sudden_tx = Some(Arc::new(Mutex::new(sudden_tx)));
 
-            // Re-download by a signal, or timeout (whichever comes first)
-            let sudden_fut = { // block to shorten locks
-                let this1 = this.lock().await;
-                this1.data().sudden_rx.clone()
-            };
-            let _ = timeout(Duration::from_secs(3600), sudden_fut.lock().await.recv()).await;
+            // Re-execute by a signal, or timeout (whichever comes first)
+            let _ = timeout(Duration::from_secs(3600), sudden_rx.recv()).await;
         }
     }
-    async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::SendError<()>>{
-        let this1 = this.lock().await;
-        this1.data().sudden_tx.lock().await.send(()).await?;
+    async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
+        let mut this1 = this.lock().await;
+        let sudden_tx = this1.data_mut().sudden_tx.take(); // atomic operation
+        if let Some(sudden_tx) = sudden_tx {
+            sudden_tx.lock().await.try_send(())?;
+        }
         Ok(())
     }
 }
@@ -89,7 +83,7 @@ mod tests {
 
     impl OurTaskQueue {
         pub fn new() -> Self {
-            let (sudden_tx, sudden_rx) = channel::<()>(1);
+            let (sudden_tx, sudden_rx) = oneshot::<()>();
             Self {
                 data: TasksWithRegularPausesData {
                     sudden_tx: Arc::new(Mutex::new(sudden_tx)),
