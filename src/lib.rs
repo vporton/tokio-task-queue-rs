@@ -15,7 +15,7 @@ pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send>>;
 pub struct TaskQueue
 {
     tx: Sender<TaskItem>,
-    rx: Arc<Mutex<Receiver<TaskItem>>>,
+    pub(crate) rx: Arc<Mutex<Receiver<TaskItem>>>,
 }
 
 impl TaskQueue {
