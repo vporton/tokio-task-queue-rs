@@ -72,13 +72,13 @@ pub trait TasksWithRegularPauses: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests {
-    use std::iter::{repeat, repeat_with};
     use std::sync::Arc;
     use std::time::Duration;
-    use futures::{Stream, stream};
     use tokio::sync::Mutex;
     use async_trait::async_trait;
-    use tokio::sync::mpsc::channel;
+    use futures::executor::block_on;
+    use tokio::runtime::Runtime;
+    use tokio_interruptible_future::InterruptError;
     use crate::TaskItem;
     use crate::tasks_with_regular_pauses::{TasksWithRegularPauses, TasksWithRegularPausesData};
 
@@ -88,12 +88,8 @@ mod tests {
 
     impl OurTaskQueue {
         pub fn new() -> Self {
-            let (sudden_tx, sudden_rx) = oneshot::<()>();
             Self {
-                data: TasksWithRegularPausesData {
-                    sudden_tx: Arc::new(Mutex::new(sudden_tx)),
-                    sudden_rx: Arc::new(Mutex::new(sudden_rx)),
-                },
+                data: TasksWithRegularPausesData::new(),
             }
         }
     }
@@ -115,9 +111,14 @@ mod tests {
     }
 
     #[test]
-    fn empty() {
-        let tasks = stream::iter(repeat_with(|| Box::pin(async { () })));
-        let tasks = Arc::new(Mutex::new(Box::pin(tasks)));
-        let tasks_with_pauses = OurTaskQueue::new(tasks, Duration::from_millis(1));
+    fn empty() -> Result<(), InterruptError> {
+        let queue = Arc::new(Mutex::new(OurTaskQueue::new()));
+        let (interrupt_notifier_tx, interrupt_notifier_rx) = async_channel::bounded(1);
+        // let handle = tokio::runtime::Handle::current();
+        // let _ = handle.enter();
+        let _ = Runtime::new().unwrap();
+        OurTaskQueue::spawn(queue, interrupt_notifier_rx);
+        let _ = block_on::<async_channel::Send<()>>(interrupt_notifier_tx.send(()));
+        Ok(())
     }
 }
