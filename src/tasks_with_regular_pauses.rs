@@ -51,7 +51,8 @@ pub trait TasksWithRegularPauses: Send + Sync + 'static {
             this.lock().await.data_mut().sudden_tx = Some(Arc::new(Mutex::new(sudden_tx)));
 
             // Re-execute by a signal, or timeout (whichever comes first)
-            let _ = timeout(Duration::from_secs(3600), sudden_rx.recv()).await;
+            let sleep_duration = this.lock().await.sleep_duration(); // lock for one line
+            let _ = timeout(sleep_duration, sudden_rx.recv()).await;
         }
     }
     fn spawn(this: Arc<Mutex<Self>>) -> JoinHandle<()> {
