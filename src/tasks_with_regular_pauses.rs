@@ -46,8 +46,7 @@ pub trait TasksWithRegularPauses: Sync {
                 break;
             }
 
-            // if the outdated signal is generated while download
-            // was in progress, ignore the signal by draining the receiver
+            // If the "sudden" signal is generated while task was in progress, ignore the signal by draining the receiver.
             loop {
                 let this2 = this2.clone();
                 let mut this1 = this.lock().await;
@@ -57,8 +56,8 @@ pub trait TasksWithRegularPauses: Sync {
                 }
             }
 
-            // re-download by a signal, or timeout (whichever comes first)
-            let mut sudden_fut = { // block to shorten locks
+            // Re-download by a signal, or timeout (whichever comes first)
+            let sudden_fut = { // block to shorten locks
                 let this1 = this.lock().await;
                 this1.data().sudden_rx.clone()
             };
