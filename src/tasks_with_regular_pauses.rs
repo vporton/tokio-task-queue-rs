@@ -28,6 +28,7 @@ impl TasksWithRegularPausesData {
     }
 }
 
+/// See module documentation.
 #[async_trait]
 pub trait TasksWithRegularPauses: Send + Sync + 'static {
     fn data(&self) -> &TasksWithRegularPausesData;
