@@ -12,6 +12,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use async_trait::async_trait;
+use tokio_interruptible_future::{InterruptError, interruptible_sendable};
 use crate::TaskItem;
 
 #[allow(dead_code)]
@@ -35,7 +36,7 @@ pub trait TasksWithRegularPauses: Send + Sync + 'static {
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
     async fn next_task(&self) -> Option<TaskItem>;
     fn sleep_duration(&self) -> Duration;
-    async fn _task(this: Arc<Mutex<Self>>) {
+    async fn _task(this: Arc<Mutex<Self>>) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
         loop {
             // It is time to run a task.
             let this1 = this.lock().await;
@@ -54,9 +55,10 @@ pub trait TasksWithRegularPauses: Send + Sync + 'static {
             let sleep_duration = this.lock().await.sleep_duration(); // lock for one line
             let _ = timeout(sleep_duration, sudden_rx.recv()).await;
         }
+        Ok(())
     }
-    fn spawn(this: Arc<Mutex<Self>>) -> JoinHandle<()> {
-        spawn(Self::_task(this))
+    fn spawn(this: Arc<Mutex<Self>>, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
+        spawn( interruptible_sendable(interrupt_notifier, Arc::new(Mutex::new(Box::pin(Self::_task(this))))))
     }
     async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
         let mut this1 = this.lock().await;
