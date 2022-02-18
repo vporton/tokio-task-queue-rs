@@ -4,27 +4,28 @@
 //!
 //! This code is more a demo of my `tokio-task-queue` than a serious module.
 
-use std::borrow::Borrow;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
-use futures::future::{Fuse, FusedFuture, ready};
-use futures::{ready, SinkExt, Stream, StreamExt, TryFutureExt};
-use futures::FutureExt;
-// use send_cell::SendCell;
-use tokio::{select, spawn};
-use tokio::sync::{mpsc, Mutex, Notify};
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::spawn;
+use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
-use tokio::time::{Sleep, sleep, timeout};
-use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable};
+use tokio::time::timeout;
 use async_trait::async_trait;
-use crate::{TaskItem, TaskQueue};
+use crate::TaskItem;
 
+#[allow(dead_code)]
 pub struct TasksWithRegularPausesData {
     sudden_tx: Option<Arc<Mutex<Sender<()>>>>,
+}
+
+impl TasksWithRegularPausesData {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self {
+            sudden_tx: None,
+        }
+    }
 }
 
 #[async_trait]

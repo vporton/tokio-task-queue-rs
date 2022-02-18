@@ -7,7 +7,7 @@ use tokio::spawn;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio_interruptible_future::{InterruptError, interruptible, interruptible_sendable, interruptible_straight};
+use tokio_interruptible_future::{InterruptError, interruptible_straight};
 
 pub type TaskItem = Pin<Box<dyn Future<Output = ()> + Send>>;
 
