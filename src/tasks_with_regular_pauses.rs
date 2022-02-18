@@ -36,8 +36,6 @@ pub trait TasksWithRegularPauses: Sync {
     fn sleep_duration(&self) -> Duration;
     async fn _task(this: Arc<Mutex<Self>>) {
         loop {
-            use tokio::sync::oneshot;
-
             // It is time to run a task.
             let this1 = this.lock().await;
             let fut = this1.next_task().await;
