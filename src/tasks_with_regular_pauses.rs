@@ -29,7 +29,7 @@ pub struct TasksWithRegularPausesData {
 }
 
 #[async_trait]
-pub trait TasksWithRegularPauses: Sync {
+pub trait TasksWithRegularPauses: Send + Sync + 'static {
     fn data(&self) -> &TasksWithRegularPausesData;
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
     async fn next_task(&self) -> Option<TaskItem>;
@@ -52,6 +52,9 @@ pub trait TasksWithRegularPauses: Sync {
             // Re-execute by a signal, or timeout (whichever comes first)
             let _ = timeout(Duration::from_secs(3600), sudden_rx.recv()).await;
         }
+    }
+    fn spawn(this: Arc<Mutex<Self>>) -> JoinHandle<()> {
+        spawn(Self::_task(this))
     }
     async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
         let mut this1 = this.lock().await;
