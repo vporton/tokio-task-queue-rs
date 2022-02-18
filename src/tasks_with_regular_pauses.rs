@@ -25,7 +25,6 @@ use crate::{TaskItem, TaskQueue};
 
 pub struct TasksWithRegularPausesData {
     sudden_tx: Option<Arc<Mutex<Sender<()>>>>,
-    // sudden_rx: Option<Arc<Mutex<Receiver<()>>>>,
 }
 
 #[async_trait]
