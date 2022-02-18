@@ -1,6 +1,6 @@
 //! Tasks that come separated by time pauses.
 //! A task can also be forced to be started at any time, but only during a pause.
-//! If a task is forced to be started, the schedule of pauses modifies to accomodate this task.
+//! If a task is forced to be started, the schedule of pauses modifies to accommodate this task.
 //!
 //! This code is more a demo of my `tokio-task-queue` than a serious module.
 
