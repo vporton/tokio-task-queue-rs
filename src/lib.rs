@@ -45,7 +45,7 @@ impl TaskQueue {
     }
     pub fn spawn(
         this: Arc<Mutex<Self>>,
-        notify_interrupt: async_channel::Receiver<()>,
+        notify_interrupt: tokio_interruptible_future::Receiver<()>,
     ) -> JoinHandle<Result<(), InterruptError>> {
         spawn( interruptible_straight(notify_interrupt, async move {
             Self::_task(this).await;

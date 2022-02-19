@@ -2,7 +2,7 @@
 //! A task can also be forced to be started at any time, but only during a pause.
 //! If a task is forced to be started, the schedule of pauses modifies to accommodate this task.
 //!
-//! This code is more a demo of my `tokio-task-queue` than a serious module.
+//! This code is maybe more a demo than a serious module.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -57,7 +57,7 @@ pub trait TasksWithRegularPauses: Send + Sync + 'static {
         }
         Ok(())
     }
-    fn spawn(this: Arc<Mutex<Self>>, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
+    fn spawn(this: Arc<Mutex<Self>>, interrupt_notifier: tokio_interruptible_future::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
         spawn( interruptible_sendable(interrupt_notifier, Arc::new(Mutex::new(Box::pin(Self::_task(this))))))
     }
     async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
@@ -76,9 +76,8 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::Mutex;
     use async_trait::async_trait;
-    use futures::executor::block_on;
     use tokio::runtime::Runtime;
-    use tokio_interruptible_future::InterruptError;
+    use tokio_interruptible_future::{InterruptError, broadcast};
     use crate::TaskItem;
     use crate::tasks_with_regular_pauses::{TasksWithRegularPauses, TasksWithRegularPausesData};
 
@@ -113,12 +112,12 @@ mod tests {
     #[test]
     fn empty() -> Result<(), InterruptError> {
         let queue = Arc::new(Mutex::new(OurTaskQueue::new()));
-        let (interrupt_notifier_tx, interrupt_notifier_rx) = async_channel::bounded(1);
-        // let handle = tokio::runtime::Handle::current();
-        // let _ = handle.enter();
-        let _ = Runtime::new().unwrap();
-        OurTaskQueue::spawn(queue, interrupt_notifier_rx);
-        let _ = block_on::<async_channel::Send<()>>(interrupt_notifier_tx.send(()));
+        let (interrupt_notifier_tx, interrupt_notifier_rx) = broadcast::<()>(1);
+        let rt  = Runtime::new().unwrap();
+        rt.block_on(async {
+            OurTaskQueue::spawn(queue, interrupt_notifier_rx);
+            let _ = interrupt_notifier_tx.send(()).await;
+        });
         Ok(())
     }
 }
