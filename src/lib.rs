@@ -1,4 +1,4 @@
-mod tasks_with_regular_pauses;
+pub mod tasks_with_regular_pauses;
 
 use std::future::Future;
 use std::pin::Pin;
