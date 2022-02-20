@@ -4,6 +4,7 @@
 //!
 //! This code is maybe more a demo than a serious module.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::spawn;
@@ -13,7 +14,6 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use async_trait::async_trait;
 use tokio_interruptible_future::{InterruptError, interruptible_sendable};
-use crate::TaskItem;
 
 #[allow(dead_code)]
 pub struct TasksWithRegularPausesData {
@@ -31,10 +31,10 @@ impl TasksWithRegularPausesData {
 
 /// See module documentation.
 #[async_trait]
-pub trait TasksWithRegularPauses: Send + Sync + 'static {
+pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + 'static {
     fn data(&self) -> &TasksWithRegularPausesData;
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
-    async fn next_task(&self) -> Option<TaskItem>;
+    async fn next_task(&self) -> Option<Task>;
     fn sleep_duration(&self) -> Duration;
     async fn _task(this: Arc<Mutex<Self>>) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
         loop {
@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl<'a> TasksWithRegularPauses for OurTaskQueue where Self: 'static {
+    impl<'a> TasksWithRegularPauses<TaskItem> for OurTaskQueue where Self: 'static {
         fn data(&self) -> &TasksWithRegularPausesData {
             &self.data
         }
