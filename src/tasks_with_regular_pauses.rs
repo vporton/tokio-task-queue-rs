@@ -57,8 +57,8 @@ pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync 
         }
         Ok(())
     }
-    fn spawn(this: Arc<Mutex<Self>>, interrupt_notifier: tokio_interruptible_future::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
-        spawn( interruptible_sendable(interrupt_notifier, Arc::new(Mutex::new(Box::pin(Self::_task(this))))))
+    fn spawn(this: Arc<Mutex<Self>>, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
+        spawn( interruptible_sendable(interrupt_notifier, Box::pin(Self::_task(this))))
     }
     async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
         let mut this1 = this.lock().await;
@@ -74,10 +74,11 @@ pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync 
 mod tests {
     use std::sync::Arc;
     use std::time::Duration;
+    use async_channel::bounded;
     use tokio::sync::Mutex;
     use async_trait::async_trait;
     use tokio::runtime::Runtime;
-    use tokio_interruptible_future::{InterruptError, broadcast};
+    use tokio_interruptible_future::InterruptError;
     use crate::TaskItem;
     use crate::tasks_with_regular_pauses::{TasksWithRegularPauses, TasksWithRegularPausesData};
 
@@ -112,7 +113,7 @@ mod tests {
     #[test]
     fn empty() -> Result<(), InterruptError> {
         let queue = Arc::new(Mutex::new(OurTaskQueue::new()));
-        let (interrupt_notifier_tx, interrupt_notifier_rx) = broadcast::<()>(1);
+        let (interrupt_notifier_tx, interrupt_notifier_rx) = bounded(1);
         let rt  = Runtime::new().unwrap();
         rt.block_on(async {
             OurTaskQueue::spawn(queue, interrupt_notifier_rx);
