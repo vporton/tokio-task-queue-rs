@@ -56,3 +56,31 @@ impl TaskQueue {
         let _ = self.tx.send(fut).await;
     }
 }
+
+/// Object-safe variation of TaskQueue
+pub struct ObjectSafeTaskQueue {
+    base: Arc<Mutex<TaskQueue>>,
+}
+
+impl ObjectSafeTaskQueue {
+    pub fn new() -> Self {
+        Self {
+            base: Arc::new(Mutex::new(TaskQueue::new())),
+        }
+    }
+    pub async fn get_arc(&self) -> &Arc<Mutex<TaskQueue>> {
+        &self.base
+    }
+    pub async fn get_arc_mut(&mut self) -> &Arc<Mutex<TaskQueue>> {
+        &mut self.base
+    }
+    pub async fn spawn(
+        &self,
+        notify_interrupt: async_channel::Receiver<()>,
+    ) -> JoinHandle<Result<(), InterruptError>> {
+        TaskQueue::spawn(self.base.clone(), notify_interrupt)
+    }
+    pub async fn push_task(&self, fut: TaskItem) {
+        self.base.lock().await.push_task(fut).await
+    }
+}

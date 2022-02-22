@@ -16,31 +16,32 @@ use async_trait::async_trait;
 use tokio_interruptible_future::{InterruptError, interruptible_sendable};
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct TasksWithRegularPausesData {
-    sudden_tx: Option<Arc<Mutex<Sender<()>>>>,
+    sudden_tx: Arc<Mutex<Option<Sender<()>>>>,
 }
 
 impl TasksWithRegularPausesData {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            sudden_tx: None,
+            sudden_tx: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 /// See module documentation.
 #[async_trait]
-pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + 'static {
+pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + Sized + 'static {
     fn data(&self) -> &TasksWithRegularPausesData;
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
     async fn next_task(&self) -> Option<Task>;
     fn sleep_duration(&self) -> Duration;
-    async fn _task(this: Arc<Mutex<Self>>) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
+    async fn _task(mut self) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
         loop {
             // It is time to run a task.
-            let this1 = this.lock().await;
-            let fut = this1.next_task().await;
+            // let this1 = this.lock().await;
+            let fut = self.next_task().await;
             if let Some(fut) = fut {
                 fut.await;
             } else {
@@ -49,26 +50,44 @@ pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync 
 
             // Signal that may interrupt the task.
             let (sudden_tx, mut sudden_rx) = mpsc::channel(1);
-            this.lock().await.data_mut().sudden_tx = Some(Arc::new(Mutex::new(sudden_tx)));
+            self.data_mut().sudden_tx = Arc::new(Mutex::new(Some(sudden_tx)));
 
             // Re-execute by a signal, or timeout (whichever comes first)
-            let sleep_duration = this.lock().await.sleep_duration(); // lock for one line
+            let sleep_duration = self.sleep_duration(); // lock for one line
             let _ = timeout(sleep_duration, sudden_rx.recv()).await;
         }
         Ok(())
     }
-    fn spawn(this: Arc<Mutex<Self>>, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
-        spawn( interruptible_sendable(interrupt_notifier, Box::pin(Self::_task(this))))
+    fn spawn(self, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
+        spawn( interruptible_sendable(interrupt_notifier, Box::pin(Self::_task(self))))
     }
-    async fn suddenly(this: Arc<Mutex<Self>>) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
-        let mut this1 = this.lock().await;
-        let sudden_tx = this1.data_mut().sudden_tx.take(); // atomic operation
+    async fn suddenly(&mut self) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
+        let sudden_tx = self.data_mut().sudden_tx.lock().await.take(); // atomic operation
         if let Some(sudden_tx) = sudden_tx {
-            sudden_tx.lock().await.try_send(())?;
+            sudden_tx.try_send(())?;
         }
         Ok(())
     }
 }
+
+/// Object-safe variation of TaskQueue
+// pub struct ObjectSafeTasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + 'static {
+//     base: Arc<Mutex<TasksWithRegularPauses<Task>>>,
+// }
+//
+// impl<Task: Future<Output = ()> + Send> ObjectSafeTasksWithRegularPauses<Task> {
+//     pub fn new() -> Self {
+//         Self {
+//             base: Arc::new(Mutex::new(TasksWithRegularPauses::new())),
+//         }
+//     }
+//     pub async fn get_arc(&self) -> &Arc<Mutex<TasksWithRegularPauses>> {
+//         &self.base
+//     }
+//     pub async fn get_arc_mut(&mut self) -> &Arc<Mutex<TasksWithRegularPauses>> {
+//         &mut self.base
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -82,6 +101,7 @@ mod tests {
     use crate::TaskItem;
     use crate::tasks_with_regular_pauses::{TasksWithRegularPauses, TasksWithRegularPausesData};
 
+    #[derive(Clone)]
     struct OurTaskQueue {
         data: TasksWithRegularPausesData,
     }
@@ -112,12 +132,13 @@ mod tests {
 
     #[test]
     fn empty() -> Result<(), InterruptError> {
-        let queue = Arc::new(Mutex::new(OurTaskQueue::new()));
+        let queue = OurTaskQueue::new();
         let (interrupt_notifier_tx, interrupt_notifier_rx) = bounded(1);
         let rt  = Runtime::new().unwrap();
         rt.block_on(async {
-            OurTaskQueue::spawn(queue, interrupt_notifier_rx);
+            OurTaskQueue::spawn(queue.clone(), interrupt_notifier_rx);
             let _ = interrupt_notifier_tx.send(()).await;
+            queue.clone().suddenly().await.unwrap();
         });
         Ok(())
     }
