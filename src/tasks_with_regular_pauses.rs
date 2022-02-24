@@ -32,7 +32,7 @@ impl TasksWithRegularPausesData {
 
 /// See module documentation.
 #[async_trait]
-pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + Sized + 'static {
+pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + 'static {
     fn data(&self) -> &TasksWithRegularPausesData;
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
     async fn next_task(&self) -> Option<Task>;

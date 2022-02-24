@@ -1,6 +1,6 @@
 [package]
 name = "tokio-task-queue"
-version = "4.0.0"
+version = "4.0.1"
 edition = "2021"
 description = "Execute futures from a stream of futures in order in a Tokio task"
 authors = ["Victor Porton"]
