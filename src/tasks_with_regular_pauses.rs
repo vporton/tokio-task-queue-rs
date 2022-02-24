@@ -37,7 +37,7 @@ pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync 
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
     async fn next_task(&self) -> Option<Task>;
     fn sleep_duration(&self) -> Duration;
-    async fn _task(mut self) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
+    async fn _task(&mut self) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
         loop {
             // It is time to run a task.
             // let this1 = this.lock().await;
@@ -58,11 +58,12 @@ pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync 
         }
         Ok(())
     }
-    fn spawn(self, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
+    // FIXME: Moving `self` here is wrong.
+    fn spawn(&'static mut self, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
         spawn( interruptible_sendable(interrupt_notifier, Box::pin(Self::_task(self))))
     }
-    async fn suddenly(&mut self) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
-        let sudden_tx = self.data_mut().sudden_tx.lock().await.take(); // atomic operation
+    async fn suddenly(&self) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
+        let sudden_tx = self.data().sudden_tx.lock().await.take(); // atomic operation
         if let Some(sudden_tx) = sudden_tx {
             sudden_tx.try_send(())?;
         }
