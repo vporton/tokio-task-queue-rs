@@ -35,7 +35,7 @@ impl TasksWithRegularPausesData {
 pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync + 'static {
     fn data(&self) -> &TasksWithRegularPausesData;
     fn data_mut(&mut self) -> &mut TasksWithRegularPausesData;
-    async fn next_task(&self) -> Option<Task>;
+    async fn next_task(&mut self) -> Option<Task>;
     fn sleep_duration(&self) -> Duration;
     async fn _task(&mut self) -> Result<(), InterruptError> { // `InterruptError` here is a hack.
         loop {
