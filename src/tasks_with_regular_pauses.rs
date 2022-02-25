@@ -58,8 +58,8 @@ pub trait TasksWithRegularPauses<Task: Future<Output = ()> + Send>: Send + Sync 
         }
         Ok(())
     }
-    fn spawn(self, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
-        spawn( interruptible_sendable(interrupt_notifier, Box::pin(Self::_task(&mut self))))
+    fn spawn(&'static mut self, interrupt_notifier: async_channel::Receiver<()>) -> JoinHandle<Result<(), InterruptError>> {
+        spawn( interruptible_sendable(interrupt_notifier, Box::pin(Self::_task(self))))
     }
     async fn suddenly(&self) -> Result<(), tokio::sync::mpsc::error::TrySendError<()>>{
         let sudden_tx = self.data().sudden_tx.lock().await.take(); // atomic operation
